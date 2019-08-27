@@ -8,6 +8,12 @@ create table scratch.ip_soft_match
   distkey (device_id)
   sortkey (client_ip, first_activity_ts)
 as (
+/*
+device_ip_activity groups by deviceid and ip; hence, it's a tally of devices and the IPs that they have been
+active on at any point in our historical data
+Each row in server_impressions is counted as activity
+The latest timestamp of a device and IP pairing are also tallied
+*/
 WITH device_ip_activity AS (
   SELECT device_id,
          COALESCE(client_ipv6,client_ip) AS client_ip,
@@ -30,12 +36,24 @@ WITH device_ip_activity AS (
 --   WHERE s.ts > dateadd('day', -3, current_date)
   GROUP BY 1,2
 )
+/*
+rankings aggregates by device_id via the rank() window function, and orders IP activeness using
+the number of server impressions first and recency second (to break ties in case of equal
+activity on multiple IPs)
+ip_rank represents the activity level of a device on all the IPs it has pinged the ad server from
+E.g. my iphone has pinged the ad server 100 times at home, and 50 times on tubi wifi. Home would be ranked
+1 and Tubi-wifi would be ranked 2
+*/
 , rankings as (
   SELECT device_id,
   client_ip,
   RANK() OVER (partition by device_id order by activity desc, latest_ts desc) as ip_rank
   FROM device_ip_activity
 )
+/*
+device_per_ip tallies the number of devices that were active on the same IP
+There is no specific time period involved, as the cutoff was chosen offline
+*/
 , devices_per_ip as (
   select client_ip, count(distinct device_id) as num_devices
   from rankings
@@ -43,6 +61,9 @@ WITH device_ip_activity AS (
   group by client_ip
   having num_devices<=5
 )
+/*
+ip_device_pairs is really only a filter step
+*/
 , ip_device_pairs as (
   select r.client_ip, r.device_id
   from rankings r
@@ -51,6 +72,15 @@ WITH device_ip_activity AS (
 --   where ip_rank=1
   where ip_rank<=10
 ),
+/*
+activity_ts tallies the first and last activities of a particular device on a particular IP
+device_active_order is the order at which devices pinged a particular IP
+For instance, if Davide's Android pings Tubi-wifi in 2018 for the first time, and my iPhone pings Tubi-wifi in 2019
+for the first time, then Davide's Android would be ranked 1, and my iPhone would be ranked 2.
+Filtering on this rank has the effect of limiting whether or not we consider only the first devices on an IP to be
+eligible for 'migration'. If a user was active on OTT first, then mobile, then ott, should a mobile to OTT migration
+be counted?
+*/
 activity_ts as (
   select i.client_ip,
          i.device_id,
