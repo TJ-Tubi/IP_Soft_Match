@@ -32,7 +32,7 @@ with valid_devices as (
 --         max(case when u.deviceid=user_alias then '0' else '1' end) as bool_registered,
         sum(non_autoplay_cvt) as nap_tvt
         from (select * from recent_video_sessions_v2
-              where cvt>0
+              where non_autoplay_cvt>0
               and video_session_start_ts >= dateadd('day', -30, CURRENT_DATE)
           ) v
                join (select * from derived.user_signon where filter_tag = 0) u
@@ -114,3 +114,5 @@ most_active_ott_video as (
          join (select title, video_id from content_v2) c on m.video_id = c.video_id
 )
 select * from res
+-- select top 100 * from res
+-- order by nap_tvt asc

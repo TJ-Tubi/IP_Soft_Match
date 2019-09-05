@@ -31,7 +31,7 @@ with valid_devices as (
         then u.deviceid end as device_id,
         sum(non_autoplay_cvt) as nap_tvt
         from (select * from recent_video_sessions_v2
-              where cvt>0
+              where non_autoplay_cvt>0
               and video_session_start_ts >= dateadd('day', -30, CURRENT_DATE)
           ) v
                join (select * from derived.user_signon where filter_tag = 0) u
@@ -111,4 +111,6 @@ most_active_ott_video as (
   from most_active_ott_video m
          join (select title, video_id from content_v2) c on m.video_id = c.video_id
 )
-select count(distinct mobile_braze_id) from res
+-- select count(distinct mobile_braze_id) from res
+-- select top 100 * from res
+select * from res
