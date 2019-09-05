@@ -25,11 +25,10 @@ with valid_devices as (
         and u.deviceid=u.user_alias
           ) --unregistered OTT devices
         or (v.app in ('tubitv-iphone','tubitv-ipad','tubitv-android','tubitv-firetablet','tubitv-android-samsung')
-            and u.deviceid<>u.user_alias --registered mobile users
+            and u.deviceid=u.user_alias --unregistered mobile users
         )
 
         then u.deviceid end as device_id,
---         max(case when u.deviceid=user_alias then '0' else '1' end) as bool_registered,
         sum(non_autoplay_cvt) as nap_tvt
         from (select * from recent_video_sessions_v2
               where cvt>0
@@ -53,51 +52,50 @@ ip_candidates_registered_mobile as (
 )
 , ip_device_parallel as (
   select i1.ip,
-         i2.user_alias as mobile_user_id,
+         i2.braze_id as mobile_braze_id,
          i3.device_id as ott_device_id,
          substring(i3.app, charindex('-', i3.app)+1, len(i3.app)-charindex('-', i3.app)) as OTT_App
   from ip_candidates_registered_mobile i1
-         join (select si.*, u.user_alias from scratch.ip_soft_match si
-               join derived.user_signon u on si.device_id=u.deviceid
+         join (select si.*, b.braze_id from scratch.ip_soft_match si
+               join scratch.braze_user_lookup b on si.device_id=b.user_alias
                join valid_devices vd on vd.device_id=si.device_id
-               where platform = 'Mobile'
-               and u.user_alias<>u.deviceid and filter_tag=0) i2 on i1.ip = i2.ip
+               where si.platform = 'Mobile') i2 on i1.ip = i2.ip
          join (select si.ip, si.device_id, si.app from scratch.ip_soft_match si
          join valid_devices vd on vd.device_id=si.device_id
          where platform = 'OTT') i3 on i1.ip = i3.ip
 )
 , ott_tvt as (
-  select ip, mobile_user_id, ott_device_id, OTT_App, sum(non_autoplay_cvt) as nap_tvt
+  select ip, mobile_braze_id, ott_device_id, OTT_App, sum(non_autoplay_cvt) as nap_tvt
   from ip_device_parallel i
          join (select non_autoplay_cvt, deviceid from recent_video_sessions_v2 where non_autoplay_cvt > 0) v
               on i.ott_device_id = v.deviceid
-  group by ip, mobile_user_id, ott_device_id, OTT_App
+  group by ip, mobile_braze_id, ott_device_id, OTT_App
 )
 ,
 most_active_ott as (
   select distinct ip,
-                  mobile_user_id,
+                  mobile_braze_id,
                   first_value(ott_device_id) over
-                    (partition by ip, mobile_user_id order by nap_tvt desc
+                    (partition by ip, mobile_braze_id order by nap_tvt desc
                     rows between unbounded preceding and unbounded following)
                     as ott_device_id, --most active ott device
                     first_value(ott_app) over
-                    (partition by ip, mobile_user_id order by nap_tvt desc
+                    (partition by ip, mobile_braze_id order by nap_tvt desc
                     rows between unbounded preceding and unbounded following)
                     as ott_app
   from ott_tvt
 )
 , ott_video_tvt as (
-  select ip, mobile_user_id, ott_device_id, OTT_App, video_id, sum(non_autoplay_cvt) as nap_tvt
+  select ip, mobile_braze_id, ott_device_id, OTT_App, video_id, sum(non_autoplay_cvt) as nap_tvt
   from most_active_ott m
          join (select non_autoplay_cvt, deviceid, video_id from recent_video_sessions_v2 where non_autoplay_cvt > 0) v
               on m.ott_device_id = v.deviceid
-  group by ip, mobile_user_id, ott_device_id, OTT_App, video_id
+  group by ip, mobile_braze_id, ott_device_id, OTT_App, video_id
 )
 ,
 most_active_ott_video as (
   select distinct ip,
-                  mobile_user_id, ott_device_id, OTT_App,
+                  mobile_braze_id, ott_device_id, OTT_App,
                   first_value(video_id) over
                     (partition by ott_device_id order by nap_tvt desc
                     rows between unbounded preceding and unbounded following)
@@ -113,5 +111,4 @@ most_active_ott_video as (
   from most_active_ott_video m
          join (select title, video_id from content_v2) c on m.video_id = c.video_id
 )
-
-select count(distinct mobile_user_id) from res
+select count(distinct mobile_braze_id) from res
