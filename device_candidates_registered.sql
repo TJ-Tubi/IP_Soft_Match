@@ -16,9 +16,9 @@ with valid_devices as (
         'tubitv-sony',
         'tubitv-ps4',
         'tubitv-ps3',
-        'tubitv-opera',
+--         'tubitv-opera',
         'tubitv-tivo',
-        'tubitv-chromecast',
+--         'tubitv-chromecast',
         'tubitv-androidtv',
         'tubitv-comcast',
         'tubitv-cox')
@@ -33,13 +33,13 @@ with valid_devices as (
         sum(non_autoplay_cvt) as nap_tvt
         from (select * from recent_video_sessions_v2
               where non_autoplay_cvt>0
-              and video_session_start_ts >= dateadd('day', -30, CURRENT_DATE)
+              and video_session_start_ts >= dateadd('day', -90, CURRENT_DATE)
           ) v
                join (select * from derived.user_signon where filter_tag = 0) u
                     on v.deviceid = u.deviceid
         where v.video_session_start_ts >= DATEADD('day', +7, u.view_ts)
         group by device_id
-        having nap_tvt >= 900
+        having nap_tvt >= 300
        )
 ,
 ip_candidates_registered_mobile as (
@@ -87,6 +87,12 @@ most_active_ott as (
                     as ott_app
   from ott_tvt
 )
+
+select * from most_active_ott
+-- select count(distinct mobile_user_id) from most_active_ott
+
+-- Per Marc's request, I am no longer including the most viewed video since it would seem too observant on users
+/*
 , ott_video_tvt as (
   select ip, mobile_user_id, ott_device_id, OTT_App, video_id, sum(non_autoplay_cvt) as nap_tvt
   from most_active_ott m
@@ -94,6 +100,7 @@ most_active_ott as (
               on m.ott_device_id = v.deviceid
   group by ip, mobile_user_id, ott_device_id, OTT_App, video_id
 )
+
 ,
 most_active_ott_video as (
   select distinct ip,
@@ -114,5 +121,8 @@ most_active_ott_video as (
          join (select title, video_id from content_v2) c on m.video_id = c.video_id
 )
 select * from res
--- select top 100 * from res
+*/
+
+
+-- select top 100 * from ott_tvt
 -- order by nap_tvt asc
