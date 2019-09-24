@@ -13,7 +13,8 @@ The latest timestamp of a device and IP pairing are also tallied
 WITH device_ip_activity AS (
   SELECT device_id,
          case when client_ip ilike '%.%' then client_ip
-              when client_ip ilike '%:%' and client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+              when client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+--               when client_ip ilike '%:%' and client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
               else NULL
          end as ip,
          /*
@@ -32,7 +33,7 @@ WITH device_ip_activity AS (
   /*
   Filter below is only enabled for debugging purposes
   */
---   WHERE s.ts > dateadd('day', -3, current_date)
+--   WHERE s.ts > dateadd('day', -1, current_date)
   GROUP BY 1,2
   having ip is not NULL
 )
@@ -86,6 +87,7 @@ activity_ts tallies the first and last activities of a particular device on a pa
 device_active_order is the order at which devices pinged a particular IP
 For instance, if Davide's Android pings Tubi-wifi in 2018 for the first time, and my iPhone pings Tubi-wifi in 2019
 for the first time, then Davide's Android would be ranked 1, and my iPhone would be ranked 2.
+
 Filtering on this rank has the effect of limiting whether or not we consider only the first devices on an IP to be
 eligible for 'migration'. If a user was active on OTT first, then mobile, then ott, should a mobile to OTT migration
 be counted?
@@ -98,12 +100,25 @@ activity_ts as (
          max(a.app) as app,
          max(a.platform) as platform,
          rank() over (partition by i.ip order by first_activity_ts asc) as device_active_order
-  from ip_device_pairs i join server_impressions s
-  on i.ip=s.client_ip and i.device_id=s.device_id
+  from ip_device_pairs i
+  join (select device_id, ts, platform,
+               case when client_ip ilike '%.%' then client_ip
+               when client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+               -- when client_ip ilike '%:%' and client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+               else NULL
+               end as ip
+        from server_impressions
+        where nvl(client_ip, client_ipv6) is not NULL
+        and nvl(client_ip, client_ipv6) not in ('', ' ')
+    ) s
+  on i.ip=s.ip and i.device_id=s.device_id
   join scratch.app_info a on s.platform=substring(app, charindex('-', app)+1, len(app)-charindex('-', app))
   group by i.ip, i.device_id
 )
-
+/*
+At this point, the records included in this dataset represent all of the devices and IPs that are clean enough to be
+accounted for for analysis that involves soft matching
+*/
 select * from activity_ts
 );
 GRANT select ON scratch.ip_soft_match to periscope_readonly; commit;
