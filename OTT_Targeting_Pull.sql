@@ -54,14 +54,46 @@ Then join back with above for final results
 
 Split into 2 cohorts
 */
+, preprocess_server_impressions as (
+  select device_id,
+  case when client_ip ilike '%.%' then client_ip
+              when client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+--               when client_ip ilike '%:%' and client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+              else NULL
+         end as ip,
+
+         case when platform IN ('tvos',
+          'xbox360',
+          'xboxone',
+          'roku',
+          'for-samsung',
+          'samsung',
+          'amazon',
+          'sony',
+          'ps4',
+          'ps3',
+          'tivo',
+          'androidtv',
+          'comcast',
+          'cox')
+        then 'OTT'
+        when platform in ('iphone','ipad','android','firetablet','android-samsung')
+        then 'Mobile' else NULL end as platform
+
+  from server_impressions
+  where ts>=dateadd('year', -1, CURRENT_DATE)
+  and platform<>'Web'
+  and nvl(client_ip, client_ipv6) is not NULL
+  and nvl(client_ip, client_ipv6) not in ('', ' ')
+  and geo_country_code='US'
+)
 , multidevice_ip_str_agg as (
   select distinct ip,
-  listagg(distinct platform, ',') within group (order by device_id)
-  over (partition by ip) as platform_str_agg
-  from scratch.ip_soft_match
-  where platform<>'Web'
-)
+        listagg(distinct platform, ',') within group (order by device_id)
+        over (partition by ip) as platform_str_agg
 
+  from preprocess_server_impressions
+)
 , mobile_only_ips as (
   select *
   from multidevice_ip_str_agg
@@ -69,7 +101,7 @@ Split into 2 cohorts
 )
 , ip_mobile_only_devices as (
   select distinct device_id
-  from scratch.ip_soft_match i join mobile_only_ips m
+  from preprocess_server_impressions i join mobile_only_ips m
   on i.ip=m.ip
 )
 
@@ -91,5 +123,4 @@ Split into 2 cohorts
         and nvl(client_ip, client_ipv6) not in ('', ' ')
     ) s
 on m.ip=s.ip
-join scratch.ip_soft_match i on m.ip=i.ip
 group by s.platform
