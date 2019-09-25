@@ -55,7 +55,7 @@ Then join back with above for final results
 Split into 2 cohorts
 */
 , preprocess_server_impressions as (
-  select device_id,
+  select distinct device_id,
   case when client_ip ilike '%.%' then client_ip
               when client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
 --               when client_ip ilike '%:%' and client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
@@ -109,7 +109,12 @@ Split into 2 cohorts
 -- from ip_mobile_only_devices i join registered_mobile_only r
 -- on i.device_id=r.deviceid
 
- select distinct s.platform, count(*) as num_events
+/*
+Below is a sanity check to make sure that the platform filtering worked (e.g. ips that only have a mobile device
+active on it, no OTT
+*/
+ select distinct s.platform
+--                , count(*) as num_events
  from (select top 5000 ip from mobile_only_ips) m
  join (select device_id, ts, platform,
                case when client_ip ilike '%.%' then client_ip
@@ -121,6 +126,7 @@ Split into 2 cohorts
         where ts>=dateadd('year', -1, CURRENT_DATE)
         and nvl(client_ip, client_ipv6) is not NULL
         and nvl(client_ip, client_ipv6) not in ('', ' ')
+        and platform<>'web'
     ) s
 on m.ip=s.ip
-group by s.platform
+-- group by s.platform
