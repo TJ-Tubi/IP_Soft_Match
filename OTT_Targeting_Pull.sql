@@ -126,7 +126,20 @@ active on it, no OTT
         where ts>=dateadd('year', -1, CURRENT_DATE)
         and nvl(client_ip, client_ipv6) is not NULL
         and nvl(client_ip, client_ipv6) not in ('', ' ')
-        and platform<>'web'
+        and platform in ('tvos',
+          'xbox360',
+          'xboxone',
+          'roku',
+          'for-samsung',
+          'samsung',
+          'amazon',
+          'sony',
+          'ps4',
+          'ps3',
+          'tivo',
+          'androidtv',
+          'comcast',
+          'cox','iphone','ipad','android','firetablet','android-samsung')
     ) s
 on m.ip=s.ip
 -- group by s.platform
