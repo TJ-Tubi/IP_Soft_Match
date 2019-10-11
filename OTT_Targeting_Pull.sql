@@ -1,3 +1,7 @@
+set seed to .25;
+
+create table scratch.ott_targeting_100719
+as (
 with registered_recently_active_tally as (
 select us.user_alias, us.deviceid,
        case when us.app IN ('tubitv-tvos',
@@ -18,7 +22,9 @@ select us.user_alias, us.deviceid,
         when us.app in ('tubitv-iphone','tubitv-ipad','tubitv-android','tubitv-firetablet','tubitv-android-samsung')
         then 'Mobile' else NULL end as platform
 from (
-  select device_id from server_impressions where ts>=dateadd('year', -1, CURRENT_DATE)
+  select device_id from server_impressions
+--   where ts>=dateadd('week', -1, CURRENT_DATE)
+  where ts between dateadd('year', -1, date('2019-10-09')) and date('2019-10-08')
   group by device_id
 --   having count(*)>10
   ) si
@@ -40,7 +46,7 @@ count_platforms as (
   from registered_recently_active_tally
 )
 , registered_mobile_only as (
-  select *
+  select distinct r.user_alias, r.deviceid
   from registered_recently_active_tally r
          join (select user_alias from count_platforms where platform_str_agg = 'Mobile') c
               on r.user_alias = c.user_alias
@@ -78,10 +84,11 @@ Split into 2 cohorts
           'cox')
         then 'OTT'
         when platform in ('iphone','ipad','android','firetablet','android-samsung')
-        then 'Mobile' else NULL end as platform
+        then 'Mobile' else 'UNKNOWN' end as platform
 
   from server_impressions
-  where ts>=dateadd('year', -1, CURRENT_DATE)
+  where ts between dateadd('year', -1, date('2019-10-09')) and date('2019-10-08')
+--   where ts>=dateadd('week', -1, CURRENT_DATE)
   and platform<>'Web'
   and nvl(client_ip, client_ipv6) is not NULL
   and nvl(client_ip, client_ipv6) not in ('', ' ')
@@ -104,42 +111,61 @@ Split into 2 cohorts
   from preprocess_server_impressions i join mobile_only_ips m
   on i.ip=m.ip
 )
+-- Below block generates the list
+, user_list_full as (
+select distinct r.user_alias as external_id
+from ip_mobile_only_devices i join registered_mobile_only r
+on i.device_id=r.deviceid
+)
 
--- select count(distinct r.deviceid)
--- from ip_mobile_only_devices i join registered_mobile_only r
--- on i.device_id=r.deviceid
+, cohortize as (
+  select external_id, round(random()) as cohort
+  from user_list_full
+)
+
+select * from cohortize
+
+-- select cohort, count(distinct external_id)
+-- from cohortize
+-- group by cohort
+);
+
+-- List for upload to Braze
+select external_id from scratch.ott_targeting_100719 where cohort = 1
 
 /*
 Below is a sanity check to make sure that the platform filtering worked (e.g. ips that only have a mobile device
 active on it, no OTT
 */
- select distinct s.platform
+--  select distinct s.platform
 --                , count(*) as num_events
- from (select top 5000 ip from mobile_only_ips) m
- join (select device_id, ts, platform,
-               case when client_ip ilike '%.%' then client_ip
-               when client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
-               -- when client_ip ilike '%:%' and client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
-               else NULL
-               end as ip
-        from server_impressions
-        where ts>=dateadd('year', -1, CURRENT_DATE)
-        and nvl(client_ip, client_ipv6) is not NULL
-        and nvl(client_ip, client_ipv6) not in ('', ' ')
-        and platform in ('tvos',
-          'xbox360',
-          'xboxone',
-          'roku',
-          'for-samsung',
-          'samsung',
-          'amazon',
-          'sony',
-          'ps4',
-          'ps3',
-          'tivo',
-          'androidtv',
-          'comcast',
-          'cox','iphone','ipad','android','firetablet','android-samsung')
-    ) s
-on m.ip=s.ip
+--  from (select ip from mobile_only_ips) m
+--  join (select device_id, ts, platform,
+--                case when client_ip ilike '%.%' then client_ip
+--                when client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+--                -- when client_ip ilike '%:%' and client_ipv6 is not NULL and len(client_ipv6)>20 then client_ipv6
+--                else NULL
+--                end as ip
+--         from server_impressions
+--         where ts between dateadd('year', -1, date('2019-10-09')) and date('2019-10-08')
+--         and nvl(client_ip, client_ipv6) is not NULL
+--         and nvl(client_ip, client_ipv6) not in ('', ' ')
+--         and platform in ('tvos',
+--           'xbox360',
+--           'xboxone',
+--           'roku',
+--           'for-samsung',
+--           'samsung',
+--           'amazon',
+--           'sony',
+--           'ps4',
+--           'ps3',
+--           'tivo',
+--           'androidtv',
+--           'comcast',
+--           'cox'
+-- --           ,'iphone','ipad','android','firetablet','android-samsung'
+--           )
+--     ) s
+-- on m.ip=s.ip
 -- group by s.platform
