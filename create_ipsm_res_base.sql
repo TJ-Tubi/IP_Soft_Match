@@ -16,8 +16,9 @@ create table scratch.ipsm_911_res
       and has_impression = True
       and filter_tag = 0
       and view_ts is not NULL
+      and button_id is not NULL
   )
-     , unregistered as (
+  , unregistered as (
     select i.ip,
            i.ott_device_id,
            ott_app,
@@ -27,10 +28,10 @@ create table scratch.ipsm_911_res
     from scratch.ipsm_unregistered_911 i
            join scratch.braze_user_lookup b on i.mobile_braze_id = b.braze_id
            join braze.inapp_user_performance ii on ii.braze_id = i.mobile_braze_id
-    where campaign_name in (
-                            'In-App_Cross_Device_Mapping_09_05_19_Unregistered_Users',
+    where campaign_name in ('In-App_Cross_Device_Mapping_09_05_19_Unregistered_Users',
                             'In-App_Cross_Device_Mapping_09_11_19_Unregistered_Users')
       and has_impression = True
+    and button_id is not NULL
   )
   , full_tally as (
     select *
@@ -47,24 +48,27 @@ create table scratch.ipsm_911_res
     from full_tally
     where ip ilike '%.%'
   )
-  , si_recency_filter as (
-    select client_ip, device_id, max(ts)
-    from server_impressions
-    where ts between '2019-07-01' and '2019-10-01'
-    and platform<>'web'
-  )
-  , filter_mobile as (
-    select i.*
-    from full_tally_labeled i
-    join si_recency_filter s on s.client_ip=i.ip and s.device_id=i.mobile_device_id
-  ), full_tally_filtered as (
-    select i.*
-    from filter_mobile i
-    join si_recency_filter s on s.client_ip=i.ip and s.device_id=i.ott_device_id
-  )
+  , mobile_latest_activity as (
+  select f.ip, f.mobile_device_id, f.ott_device_id, max(s.ts) as max_mobile_ts
+  from server_impressions s
+  join full_tally_labeled f on s.client_ip=f.ip and s.device_id=f.mobile_device_id
+  GROUP BY 1,2,3
+)
+, ott_latest_activity as (
+  select f.ip, f.ott_device_id, f.mobile_device_id, max(s.ts) as max_ott_ts
+  from server_impressions s
+  join full_tally_labeled f on s.client_ip=f.ip and s.device_id=f.ott_device_id
+  GROUP BY 1,2,3
+) , activity_time_gap as (
+  select m.ip, m.mobile_device_id, m.ott_device_id, datediff('day', max_mobile_ts, max_ott_ts) timegap
+  from mobile_latest_activity m
+  join ott_latest_activity o on m.ip=o.ip
+  and o.mobile_device_id=o.mobile_device_id
+  and o.ott_device_id=m.ott_device_id
+)
   , mobile_video_sessions_series as (
     select distinct r.ip as ip, mobile_device_id, series_id
-    from full_tally_filtered r
+    from full_tally_labeled r
     left join derived.video_sessions_v2 v on r.mobile_device_id=v.deviceid
     where video_session_start_ts between '2019-07-01' and '2019-10-01'
     and video_type='episode'
@@ -74,7 +78,7 @@ create table scratch.ipsm_911_res
   ),
   ott_video_sessions_series as (
     select distinct r.ip as ip, ott_device_id, series_id
-    from full_tally_filtered r
+    from full_tally_labeled r
     left join derived.video_sessions_v2 v on r.ott_device_id=v.deviceid
     where video_session_start_ts between '2019-07-01' and '2019-10-01'
     and video_type='episode'
@@ -87,15 +91,17 @@ create table scratch.ipsm_911_res
          i.mobile_device_id,
          i.ott_device_id,
          count(distinct case when m.series_id=o.series_id then m.series_id else NULL end)
-           as num_same_series
-  from full_tally_filtered i
+           as num_same_series,
+        (count(distinct m.series_id)+count(distinct o.series_id))-num_same_series as num_total_series,
+         case when num_total_series>0 then num_same_series::float/num_total_series else 0 end as same_series_ratio
+  from full_tally_labeled i
          left join mobile_video_sessions_series m on i.mobile_device_id = m.mobile_device_id and i.ip = m.ip
          left join ott_video_sessions_series o on i.ott_device_id = o.ott_device_id and i.ip = o.ip
   group by i.ip, i.mobile_device_id, i.ott_device_id
 )
 , mobile_video_sessions_movie as (
   select distinct r.ip as ip, mobile_device_id, video_id
-  from full_tally_filtered r
+  from full_tally_labeled r
   left join derived.video_sessions_v2 v on r.mobile_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
   and video_type='movie'
@@ -105,7 +111,7 @@ create table scratch.ipsm_911_res
 ),
 ott_video_sessions_movie as (
   select distinct r.ip as ip, ott_device_id, video_id
-  from full_tally_filtered r
+  from full_tally_labeled r
   left join derived.video_sessions_v2 v on r.ott_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
   and video_type='movie'
@@ -118,15 +124,17 @@ ott_video_sessions_movie as (
          i.mobile_device_id,
          i.ott_device_id,
          count(distinct case when m.video_id=o.video_id then m.video_id else NULL end)
-           as num_same_movie
-  from full_tally_filtered i
+           as num_same_movies,
+         (count(distinct m.video_id)+count(distinct o.video_id))-num_same_movies as num_total_movies,
+         case when num_total_movies>0 then num_same_movies::float/num_total_movies else 0 end as same_movies_ratio
+  from full_tally_labeled i
          left join mobile_video_sessions_movie m on i.mobile_device_id = m.mobile_device_id and i.ip = m.ip
          left join ott_video_sessions_movie o on i.ott_device_id = o.ott_device_id and i.ip = o.ip
   group by i.ip, i.mobile_device_id, i.ott_device_id
 ),
 mobile_video_sessions as (
   select r.ip, deviceid, first_pp_ts , last_pp_ts
-  from full_tally_filtered r
+  from full_tally_labeled r
   join recent_video_sessions_v2 v on r.mobile_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
   and autoplay_cvt=0
@@ -134,7 +142,7 @@ mobile_video_sessions as (
 ),
 ott_video_sessions as (
   select r.ip, deviceid, first_pp_ts , last_pp_ts
-  from full_tally_filtered r
+  from full_tally_labeled r
   join recent_video_sessions_v2 v on r.ott_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
   and autoplay_cvt=0
@@ -165,12 +173,16 @@ session_union as (
 
 select f.*,
        s.num_same_series,
-       m.num_same_movie,
-       v.overlap_seconds
-from full_tally_filtered f
+       s.same_series_ratio,
+       m.num_same_movies,
+       m.same_movies_ratio,
+       v.overlap_seconds,
+       a.timegap
+from full_tally_labeled f
 join same_series_bin s on f.ip=s.ip and f.mobile_device_id=s.mobile_device_id and f.ott_device_id=s.ott_device_id
 join same_movie_bin m on f.ip=m.ip and f.mobile_device_id=m.mobile_device_id and f.ott_device_id=m.ott_device_id
 join video_session_overlap v on f.ip=v.ip
+join activity_time_gap a on f.ip=a.ip and f.mobile_device_id=a.mobile_device_id and f.ott_device_id=a.ott_device_id
 );
 GRANT select ON scratch.ipsm_911_res to periscope_readonly; commit;
 grant select on table scratch.ipsm_911_res TO GROUP readonlyaccounts; commit;
