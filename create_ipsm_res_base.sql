@@ -4,7 +4,13 @@ create table scratch.ipsm_911_res
   distkey (mobile_device_id)
   as (
   with registered as (
-    select ir.ip, ir.ott_device_id, ir.ott_app, u.deviceid as mobile_device_id, mobile_registered, ii.*
+    select
+--            ir.ip,
+           ir.ott_device_id,
+           ir.ott_app,
+           u.deviceid as mobile_device_id,
+           mobile_registered,
+           ii.*
     from (select *, 1 as mobile_registered from scratch.ipsm_registered_911) ir
            join braze.inapp_user_performance ii on ir.mobile_user_id = ii.user_id
            join derived.user_signon u on ir.mobile_user_id = u.user_alias
@@ -19,7 +25,8 @@ create table scratch.ipsm_911_res
       and button_id is not NULL
   )
   , unregistered as (
-    select i.ip,
+    select
+--            i.ip,
            i.ott_device_id,
            ott_app,
            b.deviceid as mobile_device_id,
@@ -46,7 +53,7 @@ create table scratch.ipsm_911_res
 --            button_id as label,
            *
     from full_tally
-    where ip ilike '%.%'
+--     where ip ilike '%.%'
   )
   , filter_duplicate_labels as (
     select mobile_device_id, ott_device_id, count(distinct label) num_unique_labels
@@ -60,25 +67,38 @@ create table scratch.ipsm_911_res
     on f.mobile_device_id=i.mobile_device_id and f.ott_device_id=i.ott_device_id
   )
   , mobile_latest_activity as (
-  select f.ip, f.mobile_device_id, f.ott_device_id, max(s.ts) as max_mobile_ts
+  select
+--          f.ip,
+         f.mobile_device_id, f.ott_device_id, max(s.ts) as max_mobile_ts
   from server_impressions s
-  join full_tally_labeled f on s.client_ip=f.ip and s.device_id=f.mobile_device_id
+  join full_tally_labeled f on
+--     s.client_ip=f.ip and
+    s.device_id=f.mobile_device_id
   GROUP BY 1,2,3
 )
 , ott_latest_activity as (
-  select f.ip, f.ott_device_id, f.mobile_device_id, max(s.ts) as max_ott_ts
+  select
+--          f.ip,
+         f.ott_device_id, f.mobile_device_id, max(s.ts) as max_ott_ts
   from server_impressions s
-  join full_tally_labeled f on s.client_ip=f.ip and s.device_id=f.ott_device_id
+  join full_tally_labeled f on
+--     s.client_ip=f.ip and
+    s.device_id=f.ott_device_id
   GROUP BY 1,2,3
 ) , activity_time_gap as (
-  select m.ip, m.mobile_device_id, m.ott_device_id, datediff('day', max_mobile_ts, max_ott_ts) timegap
+  select
+--          m.ip,
+         m.mobile_device_id, m.ott_device_id, datediff('day', max_mobile_ts, max_ott_ts) timegap
   from mobile_latest_activity m
-  join ott_latest_activity o on m.ip=o.ip
-  and o.mobile_device_id=o.mobile_device_id
+  join ott_latest_activity o on
+--     m.ip=o.ip and
+  o.mobile_device_id=o.mobile_device_id
   and o.ott_device_id=m.ott_device_id
 )
   , mobile_video_sessions_series as (
-    select distinct r.ip as ip, mobile_device_id, series_id
+    select distinct
+--                     r.ip as ip,
+                    mobile_device_id, series_id
     from full_tally_labeled r
     left join derived.video_sessions_v2 v on r.mobile_device_id=v.deviceid
     where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -88,7 +108,9 @@ create table scratch.ipsm_911_res
     and non_autoplay_cvt>0
   ),
   ott_video_sessions_series as (
-    select distinct r.ip as ip, ott_device_id, series_id
+    select distinct
+--                     r.ip as ip,
+                    ott_device_id, series_id
     from full_tally_labeled r
     left join derived.video_sessions_v2 v on r.ott_device_id=v.deviceid
     where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -98,7 +120,8 @@ create table scratch.ipsm_911_res
     and non_autoplay_cvt>0
   )
   , same_series_bin as (
-  select i.ip,
+  select
+--          i.ip,
          i.mobile_device_id,
          i.ott_device_id,
          count(distinct case when m.series_id=o.series_id then m.series_id else NULL end)
@@ -106,12 +129,18 @@ create table scratch.ipsm_911_res
         (count(distinct m.series_id)+count(distinct o.series_id))-num_same_series as num_total_series,
          case when num_total_series>0 then num_same_series::float/num_total_series else 0 end as same_series_ratio
   from full_tally_labeled i
-         left join mobile_video_sessions_series m on i.mobile_device_id = m.mobile_device_id and i.ip = m.ip
-         left join ott_video_sessions_series o on i.ott_device_id = o.ott_device_id and i.ip = o.ip
-  group by i.ip, i.mobile_device_id, i.ott_device_id
+         left join mobile_video_sessions_series m on i.mobile_device_id = m.mobile_device_id
+--                                                        and i.ip = m.ip
+         left join ott_video_sessions_series o on i.ott_device_id = o.ott_device_id
+--                                                     and i.ip = o.ip
+  group by
+--            i.ip,
+           i.mobile_device_id, i.ott_device_id
 )
 , mobile_video_sessions_movie as (
-  select distinct r.ip as ip, mobile_device_id, video_id
+  select distinct
+--                   r.ip as ip,
+                  mobile_device_id, video_id
   from full_tally_labeled r
   left join derived.video_sessions_v2 v on r.mobile_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -121,7 +150,9 @@ create table scratch.ipsm_911_res
   and non_autoplay_cvt>0
 ),
 ott_video_sessions_movie as (
-  select distinct r.ip as ip, ott_device_id, video_id
+  select distinct
+--                   r.ip as ip,
+                  ott_device_id, video_id
   from full_tally_labeled r
   left join derived.video_sessions_v2 v on r.ott_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -131,7 +162,8 @@ ott_video_sessions_movie as (
   and non_autoplay_cvt>0
 )
 , same_movie_bin as (
-  select i.ip,
+  select
+--          i.ip,
          i.mobile_device_id,
          i.ott_device_id,
          count(distinct case when m.video_id=o.video_id then m.video_id else NULL end)
@@ -139,12 +171,18 @@ ott_video_sessions_movie as (
          (count(distinct m.video_id)+count(distinct o.video_id))-num_same_movies as num_total_movies,
          case when num_total_movies>0 then num_same_movies::float/num_total_movies else 0 end as same_movies_ratio
   from full_tally_labeled i
-         left join mobile_video_sessions_movie m on i.mobile_device_id = m.mobile_device_id and i.ip = m.ip
-         left join ott_video_sessions_movie o on i.ott_device_id = o.ott_device_id and i.ip = o.ip
-  group by i.ip, i.mobile_device_id, i.ott_device_id
+         left join mobile_video_sessions_movie m on i.mobile_device_id = m.mobile_device_id
+--                                                       and i.ip = m.ip
+         left join ott_video_sessions_movie o on i.ott_device_id = o.ott_device_id
+--                                                    and i.ip = o.ip
+  group by
+--            i.ip,
+           i.mobile_device_id, i.ott_device_id
 ),
 mobile_video_sessions as (
-  select r.ip, deviceid, first_pp_ts , last_pp_ts, non_autoplay_cvt
+  select
+--          r.ip,
+         deviceid, first_pp_ts , last_pp_ts, non_autoplay_cvt
   from full_tally_labeled r
   join recent_video_sessions_v2 v on r.mobile_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -152,7 +190,9 @@ mobile_video_sessions as (
   and non_autoplay_cvt>0
 ),
 ott_video_sessions as (
-  select r.ip, deviceid, first_pp_ts , last_pp_ts, non_autoplay_cvt
+  select
+--          r.ip,
+         deviceid, first_pp_ts , last_pp_ts, non_autoplay_cvt
   from full_tally_labeled r
   join recent_video_sessions_v2 v on r.ott_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -160,7 +200,8 @@ ott_video_sessions as (
   and non_autoplay_cvt>0
 ),
 session_union as (
-  select ip,
+  select
+--          ip,
          deviceid,
          first_pp_ts,
          last_pp_ts,
@@ -172,7 +213,8 @@ session_union as (
 )
 --Implicit assumption that the same deviceid will not have overlapping video sessions
 , session_lead_inclusion as (
-  select distinct ip,
+  select distinct
+--                   ip,
                   deviceid as current_deviceid,
                   first_pp_ts  as current_start,
                   last_pp_ts as current_end,
