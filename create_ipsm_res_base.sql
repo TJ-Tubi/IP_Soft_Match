@@ -40,13 +40,24 @@ create table scratch.ipsm_911_res
     select *
     from unregistered
   )
-  , full_tally_labeled as (
+  , full_tally_labeled_prefilter as (
     select
            case when button_id is NULL then 1 else button_id end as label,
 --            button_id as label,
            *
     from full_tally
     where ip ilike '%.%'
+  )
+  , filter_duplicate_labels as (
+    select mobile_device_id, ott_device_id, count(distinct label) num_unique_labels
+    from full_tally_labeled_prefilter
+    group by 1,2
+    having num_unique_labels=1
+  )
+  , full_tally_labeled as (
+    select i.* from full_tally_labeled_prefilter i
+    join filter_duplicate_labels f
+    on f.mobile_device_id=i.mobile_device_id and f.ott_device_id=i.ott_device_id
   )
   , mobile_latest_activity as (
   select f.ip, f.mobile_device_id, f.ott_device_id, max(s.ts) as max_mobile_ts
@@ -133,7 +144,7 @@ ott_video_sessions_movie as (
   group by i.ip, i.mobile_device_id, i.ott_device_id
 ),
 mobile_video_sessions as (
-  select r.ip, deviceid, first_pp_ts , last_pp_ts
+  select r.ip, deviceid, first_pp_ts , last_pp_ts, non_autoplay_cvt
   from full_tally_labeled r
   join recent_video_sessions_v2 v on r.mobile_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -141,7 +152,7 @@ mobile_video_sessions as (
   and non_autoplay_cvt>0
 ),
 ott_video_sessions as (
-  select r.ip, deviceid, first_pp_ts , last_pp_ts
+  select r.ip, deviceid, first_pp_ts , last_pp_ts, non_autoplay_cvt
   from full_tally_labeled r
   join recent_video_sessions_v2 v on r.ott_device_id=v.deviceid
   where video_session_start_ts between '2019-07-01' and '2019-10-01'
@@ -149,14 +160,23 @@ ott_video_sessions as (
   and non_autoplay_cvt>0
 ),
 session_union as (
-  select ip, deviceid, first_pp_ts , last_pp_ts from mobile_video_sessions
+  select ip,
+         deviceid,
+         first_pp_ts,
+         last_pp_ts,
+         non_autoplay_cvt
+  from mobile_video_sessions
   union
   select * from ott_video_sessions
   order by first_pp_ts
 )
 --Implicit assumption that the same deviceid will not have overlapping video sessions
 , session_lead_inclusion as (
-  select distinct ip, deviceid as current_deviceid, first_pp_ts  as current_start, last_pp_ts as current_end,
+  select distinct ip,
+                  deviceid as current_deviceid,
+                  first_pp_ts  as current_start,
+                  last_pp_ts as current_end,
+                  non_autoplay_cvt,
   lead (deviceid, 1 IGNORE NULLS) over (partition by ip order by first_pp_ts ) as next_deviceid,
   lead (first_pp_ts , 1 IGNORE NULLS) over (partition by ip order by first_pp_ts ) as next_start,
   lead (last_pp_ts, 1 IGNORE NULLS) over (partition by ip order by first_pp_ts ) as next_end
@@ -166,7 +186,10 @@ session_union as (
   -- seems this may have been too aggressive; may need a bit more insight into how a video session ends
   select ip,
          sum(case when next_start < dateadd('minutes', -0, current_end) and current_deviceid<>next_deviceid
-           then datediff('seconds', next_start, dateadd('minutes', -0, current_end)) else 0 end) as overlap_seconds
+           then datediff('seconds', next_start, dateadd('minutes', -0, current_end)) else 0 end)
+           as overlap_seconds,
+         sum(non_autoplay_cvt) as total_nap_tvt,
+         overlap_seconds::float/total_nap_tvt as overlap_ratio
   from session_lead_inclusion
   group by ip
 )
@@ -177,6 +200,8 @@ select f.*,
        m.num_same_movies,
        m.same_movies_ratio,
        v.overlap_seconds,
+       v.total_nap_tvt,
+       v.overlap_ratio,
        a.timegap
 from full_tally_labeled f
 join same_series_bin s on f.ip=s.ip and f.mobile_device_id=s.mobile_device_id and f.ott_device_id=s.ott_device_id
